@@ -1,0 +1,149 @@
+
+x-spark-common: &spark-common
+  image: bitnami/spark:3.5.1
+  volumes:
+    - ./jobs:/opt/airflow/jobs 
+    - ./data/input:/opt/airflow/data/input
+    - ./data/processed:/opt/airflow/data/processed
+    - ./data/warehouse:/opt/airflow/data/warehouse
+    - ./jars/postgresql-42.7.3.jar:/opt/bitnami/spark/jars/postgresql-42.7.3.jar
+    - ./jars/postgresql-42.7.3.jar:/opt/airflow/jars/postgresql-42.7.3.jar
+
+  environment:  
+    - SPARK_MODE=master
+    - SPARK_NO_DAEMONIZE=true
+  networks:
+    - spark-airflow-net
+
+x-airflow-common: &airflow-common
+  image: custom-airflow:latest
+  build: 
+    context: .
+    dockerfile: Dockerfile
+
+  env_file:
+    - airflow.env
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./jobs:/opt/airflow/jo
+    - ./data/input:/opt/airflow/data/input
+    - ./data/processed:/opt/airflow/data/processed
+    - ./data/warehouse:/opt/airflow/data/warehouse
+    - ./jars/postgresql-42.7.3.jar:/opt/bitnami/spark/jars/postgresql-42.7.3.jar
+    - ./jars/postgresql-42.7.3.jar:/opt/airflow/jars/postgresql-42.7.3.jar
+    
+  environment:
+    - AIRFLOW_UID=50000
+  networks:
+    - spark-airflow-net
+  depends_on:
+    - postgres
+
+services:
+  spark-master:
+    <<: *spark-common
+    ports:
+      - "9090:8080"  
+      - "7077:7077"  
+    command: /opt/bitnami/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    volumes:
+    - ./data/input:/opt/airflow/data/input
+    - ./data/processed:/opt/airflow/data/processed
+    - ./data/warehouse:/opt/airflow/data/warehouse
+    - ./jars/postgresql-42.7.3.jar:/opt/bitnami/spark/jars/postgresql-42.7.3.jar
+    - ./jars/postgresql-42.7.3.jar:/opt/airflow/jars/postgresql-42.7.3.jar
+    
+
+  spark-worker-1:
+    <<: *spark-common
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2g
+    depends_on:
+      - spark-master
+    command: /opt/bitnami/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    volumes:
+    - ./data/input:/opt/airflow/data/input
+    - ./data/processed:/opt/airflow/data/processed
+    - ./data/warehouse:/opt/airflow/data/warehouse
+    - ./jars/postgresql-42.7.3.jar:/opt/bitnami/spark/jars/postgresql-42.7.3.jar
+    - ./jars/postgresql-42.7.3.jar:/opt/airflow/jars/postgresql-42.7.3.jar
+
+
+  spark-worker-2:
+    <<: *spark-common
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2g
+    depends_on:
+      - spark-master
+    command: /opt/bitnami/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    volumes:
+    - ./data/input:/opt/airflow/data/input
+    - ./data/processed:/opt/airflow/data/processed
+    - ./data/warehouse:/opt/airflow/data/warehouse
+    - ./jars/postgresql-42.7.3.jar:/opt/bitnami/spark/jars/postgresql-42.7.3.jar
+    - ./jars/postgresql-42.7.3.jar:/opt/airflow/jars/postgresql-42.7.3.jar
+
+
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=<password>
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=IAS
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - spark-airflow-net
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 2
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: bash -c "while ! airflow db check; do sleep 5; done && airflow webserver"
+    ports:
+      - "8090:8080"
+    depends_on:
+      airflow-scheduler:
+        condition: service_started
+      postgres:
+          condition: service_healthy
+    
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: bash -c "airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com && airflow scheduler"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-trigger:
+    <<: *airflow-common
+    command: bash -c "while ! airflow db check; do sleep 5; done && airflow dags trigger spark_etl_pipeline"
+    depends_on:
+      airflow-scheduler:
+        condition: service_started
+
+
+
+networks:
+  spark-airflow-net:
+    driver: bridge
+
+volumes:
+  postgres_data:

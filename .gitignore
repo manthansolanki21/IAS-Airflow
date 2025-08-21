@@ -1,0 +1,8 @@
+.idea
+logs
+airflow
+__pycache__
+requirements.txt
+temp.txt
+plugins/gcp_cred.json
+jobs/etl.py
